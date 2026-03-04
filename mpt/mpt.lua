@@ -2,7 +2,9 @@
 local json = require("dkjson")
 local args = {...}
 
--- Ensure repo.json exists
+-- =========================
+-- Repo management
+-- =========================
 local repoFile = "repo.json"
 local repos = {}
 local f = io.open(repoFile, "r")
@@ -18,30 +20,35 @@ else
     f:close()
 end
 
--- Helper: save repos
 local function save_repos()
     local f = io.open(repoFile, "w")
     f:write(json.encode(repos, { indent = true }))
     f:close()
 end
 
--- Helper: check if file exists
+-- =========================
+-- Helpers
+-- =========================
 local function file_exists(name)
     local f = io.open(name, "r")
     if f then f:close() return true end
     return false
 end
 
--- Helper: download file via shell.run("wget ...")
 local function download(url, out)
     print("Downloading "..url.." -> "..out)
     local success = shell.run("wget", url, out)
     return success
 end
 
--- Attempt to download the main package from all repos
+-- =========================
+-- Main download functions
+-- =========================
 local function download_from_repos(package, version, repoList)
     local outDir = "mpt-programs"
+    if not fs.exists(outDir) then
+        shell.run("mkdir", outDir)
+    end
     local outFile = string.format("%s/%s.lua", outDir, package)
 
     for _, repo in ipairs(repoList) do
@@ -64,11 +71,9 @@ local function download_from_repos(package, version, repoList)
     return false
 end
 
--- Download dependencies.json into .tmp folder and return its path
 local function download_dependencies_file(package, version, repoList)
     local tmpDir = ".tmp"
-    -- ensure tmp folder exists
-    if not file_exists(tmpDir) then
+    if not fs.exists(tmpDir) then
         shell.run("mkdir", tmpDir)
     end
     local depFile = string.format("%s/dependencies-%s.json", tmpDir, package)
@@ -88,33 +93,38 @@ local function download_dependencies_file(package, version, repoList)
     return nil
 end
 
+-- =========================
 -- Recursive dependency installer
+-- =========================
 local function resolve_dependencies(package, version, repoList)
     local depFile = download_dependencies_file(package, version, repoList)
     if depFile then
         local f = io.open(depFile, "r")
-        local content = f:read("*a")
-        f:close()
-        local deps = json.decode(content)
-        -- remove the temporary dependency file immediately
-        os.remove(depFile)
-        for _, dep in ipairs(deps) do
-            local depPackage = dep.package
-            local depVersion = dep.version
-            local depPath = string.format("mpt-programs/%s.lua", depPackage)
-            if not file_exists(depPath) then
-                print("Installing dependency "..depPackage.." version "..depVersion)
-                shell.run(arg[0], "install", depPackage, depVersion)
+        if f then
+            local content = f:read("*a")
+            f:close()
+            local deps = json.decode(content)
+            if fs.exists(depFile) then fs.delete(depFile) end
+            for _, dep in ipairs(deps) do
+                local depPackage = dep.package
+                local depVersion = dep.version
+                local depPath = string.format("mpt-programs/%s.lua", depPackage)
+                if not file_exists(depPath) then
+                    print("Installing dependency "..depPackage.." version "..depVersion)
+                    shell.run(arg[0], "install", depPackage, depVersion)
+                end
             end
+        else
+            print("Failed to open downloaded dependencies for "..package..", skipping.")
         end
     else
         print("No dependencies.json found for "..package..", skipping dependencies.")
     end
 end
 
--- =======================
+-- =========================
 -- Command handling
--- =======================
+-- =========================
 if args[1] == "install" and args[2] and args[3] then
     local package = args[2]
     local version = args[3]
