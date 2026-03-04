@@ -13,8 +13,7 @@ if f then
         repos = json.decode(content)
     end
 else
-    -- create empty repo.json
-    f = io.open(repoFile, "w")
+    local f = io.open(repoFile, "w")
     f:write(json.encode({}))
     f:close()
 end
@@ -40,7 +39,7 @@ local function download(url, out)
     return success
 end
 
--- Attempt to download from all repos until success
+-- Attempt to download the main package from all repos
 local function download_from_repos(package, version, repoList)
     local outDir = "mpt-programs"
     local outFile = string.format("%s/%s.lua", outDir, package)
@@ -65,14 +64,40 @@ local function download_from_repos(package, version, repoList)
     return false
 end
 
+-- Download dependencies.json into .tmp folder and return its path
+local function download_dependencies_file(package, version, repoList)
+    local tmpDir = ".tmp"
+    -- ensure tmp folder exists
+    if not file_exists(tmpDir) then
+        shell.run("mkdir", tmpDir)
+    end
+    local depFile = string.format("%s/dependencies-%s.json", tmpDir, package)
+
+    for _, repo in ipairs(repoList) do
+        local url = string.format(
+            "https://raw.githubusercontent.com/%s/refs/heads/1.0/%s/%s/dependencies.json",
+            repo,
+            package,
+            version
+        )
+        if download(url, depFile) then
+            print("Downloaded dependencies for "..package)
+            return depFile
+        end
+    end
+    return nil
+end
+
 -- Recursive dependency installer
-local function resolve_dependencies(version)
-    local depFile = "mpt-programs/"..version.."-dependencies.json"
-    if file_exists(depFile) then
+local function resolve_dependencies(package, version, repoList)
+    local depFile = download_dependencies_file(package, version, repoList)
+    if depFile then
         local f = io.open(depFile, "r")
         local content = f:read("*a")
         f:close()
         local deps = json.decode(content)
+        -- remove the temporary dependency file immediately
+        os.remove(depFile)
         for _, dep in ipairs(deps) do
             local depPackage = dep.package
             local depVersion = dep.version
@@ -82,6 +107,8 @@ local function resolve_dependencies(version)
                 shell.run(arg[0], "install", depPackage, depVersion)
             end
         end
+    else
+        print("No dependencies.json found for "..package..", skipping dependencies.")
     end
 end
 
@@ -94,7 +121,7 @@ if args[1] == "install" and args[2] and args[3] then
     print("Installing package:", package, "version:", version)
 
     if download_from_repos(package, version, repos) then
-        resolve_dependencies(version)
+        resolve_dependencies(package, version, repos)
     end
 
 elseif args[1] == "repo" and args[2] and args[3] then
